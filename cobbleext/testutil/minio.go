@@ -44,24 +44,25 @@ type MinIOContainer struct {
 
 // StartMinIO starts a MinIO Docker container for testing.
 // It automatically stops the container when the test completes.
-func StartMinIO(t *testing.T) *MinIOContainer {
-	t.Helper()
+// Accepts both *testing.T and *testing.B via the testing.TB interface.
+func StartMinIO(tb testing.TB) *MinIOContainer {
+	tb.Helper()
 
 	// Check if Docker is available
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not found, skipping MinIO integration test")
+		tb.Skip("docker not found, skipping MinIO integration test")
 	}
 
 	// Find an available port
 	port, err := findAvailablePort()
 	if err != nil {
-		t.Fatalf("failed to find available port: %v", err)
+		tb.Fatalf("failed to find available port: %v", err)
 	}
 
 	// Start MinIO container
 	containerID, err := startMinIOContainer(port)
 	if err != nil {
-		t.Fatalf("failed to start MinIO container: %v", err)
+		tb.Fatalf("failed to start MinIO container: %v", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -74,13 +75,13 @@ func StartMinIO(t *testing.T) *MinIOContainer {
 	}
 
 	// Register cleanup
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		container.Stop()
 	})
 
 	// Wait for MinIO to be ready
 	if err := container.waitForReady(30 * time.Second); err != nil {
-		t.Fatalf("MinIO failed to become ready: %v", err)
+		tb.Fatalf("MinIO failed to become ready: %v", err)
 	}
 
 	return container
