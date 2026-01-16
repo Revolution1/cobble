@@ -239,6 +239,24 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// LoadFile loads configuration from a specific file path.
+func LoadFile(path string) (*Config, error) {
+	cfg := &Config{}
+
+	if err := loadFromFile(cfg, path); err != nil {
+		return nil, fmt.Errorf("cobbleext: failed to load config from %s: %w", path, err)
+	}
+
+	LoadFromEnv(cfg)
+	applyDefaults(cfg)
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("cobbleext: invalid config: %w", err)
+	}
+
+	return cfg, nil
+}
+
 func loadFromFile(cfg *Config, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
