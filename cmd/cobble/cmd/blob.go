@@ -177,7 +177,7 @@ func runBlobInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get blob size
-	blobPath := prefix + "blobs/" + hash[:2] + "/" + hash
+	blobPath := prefix + "blobs/" + hash
 	size, err := storage.Size(blobPath)
 	if err != nil {
 		return fmt.Errorf("failed to get blob size: %w", err)
@@ -199,11 +199,11 @@ func runBlobInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	info := struct {
-		Hash       string   `json:"hash"`
-		Size       int64    `json:"size"`
-		RefCount   int      `json:"ref_count"`
-		Path       string   `json:"path"`
-		Snapshots  []string `json:"snapshots"`
+		Hash      string   `json:"hash"`
+		Size      int64    `json:"size"`
+		RefCount  int      `json:"ref_count"`
+		Path      string   `json:"path"`
+		Snapshots []string `json:"snapshots"`
 	}{
 		Hash:      hash,
 		Size:      size,
@@ -261,7 +261,7 @@ func runBlobVerify(cmd *cobra.Command, args []string) error {
 	missing := 0
 
 	for i, hash := range hashes {
-		blobPath := prefix + "blobs/" + hash[:2] + "/" + hash
+		blobPath := prefix + "blobs/" + hash
 
 		if blobVerbose {
 			fmt.Printf("  [%d/%d] %s...", i+1, len(hashes), hash[:16])

@@ -168,7 +168,7 @@ func runCatalogVerify(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Checking %d blobs...\n", len(catalog.BlobRefCounts))
 	missingBlobs := 0
 	for hash := range catalog.BlobRefCounts {
-		blobPath := prefix + "blobs/" + hash[:2] + "/" + hash
+		blobPath := prefix + "blobs/" + hash
 		_, err := storage.Size(blobPath)
 		if err != nil {
 			if storage.IsNotExistError(err) {

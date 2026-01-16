@@ -79,7 +79,7 @@ func runMaintenanceRun(cmd *cobra.Command, args []string) error {
 	defer storage.Close()
 
 	if maintenanceDryRun {
-		fmt.Println("DRY RUN - no changes will be made\n")
+		fmt.Println("DRY RUN - no changes will be made")
 	}
 
 	result := MaintenanceResult{
@@ -197,10 +197,10 @@ func runMaintenanceStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	status := StorageStatus{
-		Prefix:         prefix,
-		SnapshotCount:  len(catalog.Snapshots),
+		Prefix:          prefix,
+		SnapshotCount:   len(catalog.Snapshots),
 		UniqueBlobCount: len(catalog.BlobRefCounts),
-		LastUpdated:    catalog.UpdatedAt,
+		LastUpdated:     catalog.UpdatedAt,
 	}
 
 	// Calculate total size
@@ -274,32 +274,32 @@ func runMaintenanceStatus(cmd *cobra.Command, args []string) error {
 
 // MaintenanceResult holds the result of a maintenance run.
 type MaintenanceResult struct {
-	DryRun              bool      `json:"dry_run"`
-	StartTime           time.Time `json:"start_time"`
-	EndTime             time.Time `json:"end_time"`
-	Duration            string    `json:"duration"`
-	TotalSnapshots      int       `json:"total_snapshots"`
-	TotalBlobs          int       `json:"total_blobs"`
-	ChainsFound         int       `json:"chains_found"`
-	SnapshotsCompacted  int       `json:"snapshots_compacted"`
-	SnapshotsDeleted    int       `json:"snapshots_deleted"`
+	DryRun               bool      `json:"dry_run"`
+	StartTime            time.Time `json:"start_time"`
+	EndTime              time.Time `json:"end_time"`
+	Duration             string    `json:"duration"`
+	TotalSnapshots       int       `json:"total_snapshots"`
+	TotalBlobs           int       `json:"total_blobs"`
+	ChainsFound          int       `json:"chains_found"`
+	SnapshotsCompacted   int       `json:"snapshots_compacted"`
+	SnapshotsDeleted     int       `json:"snapshots_deleted"`
 	OrphanedBlobsCleaned int       `json:"orphaned_blobs_cleaned"`
 }
 
 // StorageStatus holds storage status information.
 type StorageStatus struct {
-	Prefix            string    `json:"prefix"`
-	LastUpdated       time.Time `json:"last_updated"`
-	SnapshotCount     int       `json:"snapshot_count"`
-	SnapshotsLast24h  int       `json:"snapshots_last_24h"`
-	SnapshotsLastWeek int       `json:"snapshots_last_week"`
+	Prefix             string    `json:"prefix"`
+	LastUpdated        time.Time `json:"last_updated"`
+	SnapshotCount      int       `json:"snapshot_count"`
+	SnapshotsLast24h   int       `json:"snapshots_last_24h"`
+	SnapshotsLastWeek  int       `json:"snapshots_last_week"`
 	SnapshotsLastMonth int       `json:"snapshots_last_month"`
-	SnapshotsOlder    int       `json:"snapshots_older"`
-	TotalSize         int64     `json:"total_size"`
-	UniqueBlobCount   int       `json:"unique_blob_count"`
-	TotalBlobRefs     int       `json:"total_blob_refs"`
-	MaxChainLength    int       `json:"max_chain_length"`
-	AvgChainLength    float64   `json:"avg_chain_length"`
+	SnapshotsOlder     int       `json:"snapshots_older"`
+	TotalSize          int64     `json:"total_size"`
+	UniqueBlobCount    int       `json:"unique_blob_count"`
+	TotalBlobRefs      int       `json:"total_blob_refs"`
+	MaxChainLength     int       `json:"max_chain_length"`
+	AvgChainLength     float64   `json:"avg_chain_length"`
 }
 
 // ChainInfo holds information about a snapshot's dependency chain.
