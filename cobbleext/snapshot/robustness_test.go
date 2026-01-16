@@ -633,16 +633,16 @@ func TestEdgeCaseSpecialCharactersInLabels(t *testing.T) {
 
 	// Test various special characters in labels
 	specialLabels := map[string]string{
-		"unicode":     "日本語テスト",
-		"emoji":       "🚀📦💾",
-		"quotes":      `"quoted" 'value'`,
-		"newline":     "line1\nline2",
-		"json-chars":  `{"key": "value"}`,
-		"path-chars":  "/path/to/file",
-		"url":         "https://example.com?foo=bar&baz=qux",
-		"empty":       "",
-		"whitespace":  "  spaces  ",
-		"long-value":  strings.Repeat("long", 100),
+		"unicode":    "日本語テスト",
+		"emoji":      "🚀📦💾",
+		"quotes":     `"quoted" 'value'`,
+		"newline":    "line1\nline2",
+		"json-chars": `{"key": "value"}`,
+		"path-chars": "/path/to/file",
+		"url":        "https://example.com?foo=bar&baz=qux",
+		"empty":      "",
+		"whitespace": "  spaces  ",
+		"long-value": strings.Repeat("long", 100),
 	}
 
 	manifest, err := CreateCASSnapshot(context.Background(), adapter, CASSnapshotOptions{

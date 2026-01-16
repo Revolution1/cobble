@@ -242,10 +242,10 @@ func (n *gethNode) startAdminServer(t *testing.T, addr string) {
 	t.Helper()
 
 	cfg := server.Config{
-		Enabled:             true,
-		Addr:                addr,
+		Enabled:              true,
+		Addr:                 addr,
 		TieredStorageEnabled: false,
-		AutoSnapshotEnabled: false,
+		AutoSnapshotEnabled:  false,
 	}
 
 	// Use chaindata as the primary DB for admin server

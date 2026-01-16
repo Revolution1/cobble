@@ -30,9 +30,9 @@ func TestParseSize(t *testing.T) {
 		{"32KB", 32 * 1024, false},
 		{"1.5GB", int64(1.5 * 1024 * 1024 * 1024), false},
 		{"  10GB  ", 10 * 1024 * 1024 * 1024, false}, // whitespace
-		{"", 0, true},                                 // empty
-		{"abc", 0, true},                              // invalid
-		{"-1GB", 0, true},                             // negative
+		{"", 0, true},                                // empty
+		{"abc", 0, true},                             // invalid
+		{"-1GB", 0, true},                            // negative
 	}
 
 	for _, tt := range tests {
