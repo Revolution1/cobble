@@ -87,12 +87,11 @@ func init() {
 	checkpointCmd.AddCommand(checkpointGCCmd)
 	checkpointCmd.AddCommand(checkpointInfoCmd)
 
-	checkpointCreateCmd.Flags().StringVar(&checkpointDataDir, "data-dir", "", "Path to the data directory containing one or more Pebble databases")
+	checkpointCreateCmd.Flags().StringVar(&checkpointDataDir, "data-dir", "", "Path to the data directory containing Pebble databases (auto-detected from admin API if not specified)")
 	checkpointCreateCmd.Flags().StringVar(&checkpointDesc, "description", "", "Description for the checkpoint")
 	checkpointCreateCmd.Flags().StringVar(&checkpointBlockNum, "block-number", "", "Optional block number metadata")
 	checkpointCreateCmd.Flags().StringVar(&checkpointBlockHash, "block-hash", "", "Optional block hash metadata")
 	checkpointCreateCmd.Flags().StringVar(&checkpointStateRoot, "state-root", "", "Optional state root metadata")
-	checkpointCreateCmd.MarkFlagRequired("data-dir")
 
 	checkpointListCmd.Flags().BoolVar(&checkpointJSON, "json", false, "Output in JSON format")
 
@@ -127,7 +126,18 @@ type checkpointEntry struct {
 }
 
 func runCheckpointCreate(cmd *cobra.Command, args []string) error {
-	info, err := os.Stat(checkpointDataDir)
+	// Auto-detect data-dir from admin API if not specified
+	dataDir := checkpointDataDir
+	if dataDir == "" {
+		var err error
+		dataDir, err = getDataDirFromAdmin()
+		if err != nil {
+			return fmt.Errorf("--data-dir not specified and failed to get from admin API: %w", err)
+		}
+		fmt.Printf("Using data directory from admin API: %s\n", dataDir)
+	}
+
+	info, err := os.Stat(dataDir)
 	if err != nil {
 		return fmt.Errorf("data-dir not found: %w", err)
 	}
@@ -141,12 +151,12 @@ func runCheckpointCreate(cmd *cobra.Command, args []string) error {
 	}
 	defer storage.Close()
 
-	dbDirs, err := findPebbleDBs(checkpointDataDir)
+	dbDirs, err := findPebbleDBs(dataDir)
 	if err != nil {
 		return err
 	}
 	if len(dbDirs) == 0 {
-		return fmt.Errorf("no Pebble databases found in data-dir (searched %s)", checkpointDataDir)
+		return fmt.Errorf("no Pebble databases found in data-dir (searched %s)", dataDir)
 	}
 
 	checkpointID := time.Now().UTC().Format("20060102T150405.000000000Z")

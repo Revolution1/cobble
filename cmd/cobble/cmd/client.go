@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -109,6 +110,40 @@ func (c *AdminClient) Post(ctx context.Context, path string, body interface{}) (
 // Delete performs a DELETE request.
 func (c *AdminClient) Delete(ctx context.Context, path string) ([]byte, error) {
 	return c.do(ctx, http.MethodDelete, path, nil)
+}
+
+// getDataDirFromAdmin retrieves the database directory path from the admin API.
+// This allows commands to auto-detect the data directory when connected to an admin server.
+func getDataDirFromAdmin() (string, error) {
+	client, err := getAdminClient()
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := client.Get(ctx, "/status")
+	if err != nil {
+		return "", fmt.Errorf("failed to get status from admin API: %w", err)
+	}
+
+	var status struct {
+		DBPath string `json:"db_path"`
+	}
+	if err := json.Unmarshal(resp, &status); err != nil {
+		return "", fmt.Errorf("failed to parse status response: %w", err)
+	}
+
+	if status.DBPath == "" {
+		return "", fmt.Errorf("admin API returned empty db_path")
+	}
+
+	// The admin server returns the path to a single database.
+	// For checkpoint, we typically want the parent directory containing multiple DBs.
+	// Check if the parent directory contains multiple Pebble DBs.
+	parentDir := filepath.Dir(status.DBPath)
+	return parentDir, nil
 }
 
 func (c *AdminClient) do(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
