@@ -73,6 +73,15 @@ func FileCacheSize(maxOpenFiles int) int {
 func Open(dirname string, opts *Options) (db *DB, err error) {
 	// Make a copy of the options so that we don't mutate the passed in options.
 	opts = opts.Clone()
+
+	// Apply external configuration from environment variables or config files.
+	// This hook is set by the cobbleext package when it is imported.
+	if ExternalConfigHook != nil {
+		if err := ExternalConfigHook(opts); err != nil {
+			return nil, err
+		}
+	}
+
 	opts.EnsureDefaults()
 	if err := opts.Validate(); err != nil {
 		return nil, err
