@@ -189,7 +189,7 @@ func runCatalogVerify(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		for _, blob := range manifest.Blobs {
-			computedRefs[blob.Hash]++
+			computedRefs[blob.Key]++
 		}
 	}
 

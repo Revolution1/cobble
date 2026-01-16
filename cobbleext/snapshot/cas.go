@@ -40,10 +40,26 @@ const (
 	casCatalogFile    = "catalog.json"
 )
 
+// BlobKeyType indicates how the blob is identified in storage.
+type BlobKeyType string
+
+const (
+	// BlobKeyTypeSHA256 indicates the blob key is a SHA256 hash of content.
+	// Format: "sha256:<hex-encoded-hash>"
+	BlobKeyTypeSHA256 BlobKeyType = "sha256"
+
+	// BlobKeyTypeETag indicates the blob key is an S3/GCS ETag.
+	// Format: "etag:<etag-value>"
+	// Used for files already in tiered storage to avoid re-downloading.
+	BlobKeyTypeETag BlobKeyType = "etag"
+)
+
 // CASBlobRef represents a reference to a content-addressed blob.
 type CASBlobRef struct {
-	// Hash is the SHA256 hash of the blob content (hex encoded).
-	Hash string `json:"hash"`
+	// Key is the unique identifier for the blob in storage.
+	// Format: "<type>:<value>" where type is "sha256" or "etag".
+	// Examples: "sha256:abc123...", "etag:d41d8cd98f00b204"
+	Key string `json:"key"`
 
 	// Size is the size of the blob in bytes.
 	Size int64 `json:"size"`
@@ -53,6 +69,50 @@ type CASBlobRef struct {
 
 	// Type is the file type (sst, manifest, options, wal, marker, etc.)
 	Type string `json:"type,omitempty"`
+
+	// Source indicates where this blob came from.
+	// "local" = uploaded from local checkpoint
+	// "tiered" = copied from tiered storage
+	Source string `json:"source,omitempty"`
+}
+
+// KeyType returns the type of the blob key.
+func (b *CASBlobRef) KeyType() BlobKeyType {
+	if len(b.Key) > 7 && b.Key[:7] == "sha256:" {
+		return BlobKeyTypeSHA256
+	}
+	if len(b.Key) > 5 && b.Key[:5] == "etag:" {
+		return BlobKeyTypeETag
+	}
+	// Legacy format: bare hash without prefix (assume SHA256)
+	return BlobKeyTypeSHA256
+}
+
+// KeyValue returns the value part of the key (without the type prefix).
+func (b *CASBlobRef) KeyValue() string {
+	if len(b.Key) > 7 && b.Key[:7] == "sha256:" {
+		return b.Key[7:]
+	}
+	if len(b.Key) > 5 && b.Key[:5] == "etag:" {
+		return b.Key[5:]
+	}
+	// Legacy format: bare hash
+	return b.Key
+}
+
+// BlobPath returns the path to the blob in storage.
+func (b *CASBlobRef) BlobPath() string {
+	return casBlobPrefix + b.Key
+}
+
+// MakeSHA256Key creates a blob key from a SHA256 hash.
+func MakeSHA256Key(hash string) string {
+	return "sha256:" + hash
+}
+
+// MakeETagKey creates a blob key from an ETag.
+func MakeETagKey(etag string) string {
+	return "etag:" + etag
 }
 
 // CASManifest represents a snapshot manifest using content-addressed blobs.
@@ -231,10 +291,45 @@ func CreateCASSnapshot(ctx context.Context, db DBAdapter, opts CASSnapshotOption
 		opts.ProgressFn(CASProgress{Phase: "scan"})
 	}
 
-	// Scan and hash all files
-	files, err := scanAndHashFiles(checkpointDir)
+	// Load remote object catalog to identify files already in tiered storage
+	remoteFiles, err := LoadRemoteObjectCatalog(checkpointDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan files: %w", err)
+		// Non-fatal: continue without remote file optimization
+		remoteFiles = make(map[string]RemoteFileInfo)
+	}
+
+	// Scan all files in checkpoint
+	entries, err := os.ReadDir(checkpointDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read checkpoint dir: %w", err)
+	}
+
+	// Separate local and remote files
+	var localFiles []fileHashInfo
+	var remoteFileList []RemoteFileInfo
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+
+		if remoteInfo, isRemote := remoteFiles[name]; isRemote {
+			// File is in tiered storage
+			remoteFileList = append(remoteFileList, remoteInfo)
+		} else {
+			// Local file - needs hash calculation
+			filePath := filepath.Join(checkpointDir, name)
+			hash, size, err := hashFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to hash %s: %w", name, err)
+			}
+			localFiles = append(localFiles, fileHashInfo{
+				name: name,
+				hash: hash,
+				size: size,
+			})
+		}
 	}
 
 	// Load existing catalog to check for existing blobs
@@ -243,16 +338,15 @@ func CreateCASSnapshot(ctx context.Context, db DBAdapter, opts CASSnapshotOption
 		return nil, fmt.Errorf("failed to load catalog: %w", err)
 	}
 
-	// Determine which blobs need to be uploaded
+	// Determine which local blobs need to be uploaded
 	var toUpload []fileHashInfo
-	var existing []fileHashInfo
+	var existingLocal []fileHashInfo
 
-	for _, f := range files {
-		if catalog.BlobRefCounts[f.hash] > 0 {
-			// Blob already exists
-			existing = append(existing, f)
+	for _, f := range localFiles {
+		key := MakeSHA256Key(f.hash)
+		if catalog.BlobRefCounts[key] > 0 {
+			existingLocal = append(existingLocal, f)
 		} else {
-			// Need to upload
 			toUpload = append(toUpload, f)
 		}
 	}
@@ -267,11 +361,11 @@ func CreateCASSnapshot(ctx context.Context, db DBAdapter, opts CASSnapshotOption
 			Phase:        "upload",
 			FilesTotal:   len(toUpload),
 			BytesTotal:   totalSize,
-			BlobsSkipped: len(existing),
+			BlobsSkipped: len(existingLocal),
 		})
 	}
 
-	// Upload new blobs
+	// Upload local blobs
 	uploader := &casUploader{
 		storage:     opts.Storage,
 		prefix:      prefix,
@@ -283,17 +377,44 @@ func CreateCASSnapshot(ctx context.Context, db DBAdapter, opts CASSnapshotOption
 		return nil, fmt.Errorf("failed to upload blobs: %w", err)
 	}
 
-	// Create blob references
-	blobs := make([]CASBlobRef, 0, len(files))
+	// Handle remote files: copy from tiered storage or get ETag
+	var remoteBlobs []CASBlobRef
+	if len(remoteFileList) > 0 {
+		if opts.ProgressFn != nil {
+			opts.ProgressFn(CASProgress{Phase: "copy_remote", FilesTotal: len(remoteFileList)})
+		}
+
+		copier := &remoteBlobCopier{
+			storage:     opts.Storage,
+			prefix:      prefix,
+			parallelism: parallelism,
+		}
+
+		remoteBlobs, err = copier.copyRemoteBlobs(ctx, remoteFileList, catalog)
+		if err != nil {
+			return nil, fmt.Errorf("failed to copy remote blobs: %w", err)
+		}
+	}
+
+	// Create blob references for local files
+	blobs := make([]CASBlobRef, 0, len(localFiles)+len(remoteBlobs))
 	var totalSize int64
-	for _, f := range files {
+
+	for _, f := range localFiles {
 		blobs = append(blobs, CASBlobRef{
-			Hash:         f.hash,
+			Key:          MakeSHA256Key(f.hash),
 			Size:         f.size,
 			OriginalName: f.name,
 			Type:         detectFileType(f.name),
+			Source:       "local",
 		})
 		totalSize += f.size
+	}
+
+	// Add remote blob references
+	for _, rb := range remoteBlobs {
+		blobs = append(blobs, rb)
+		totalSize += rb.Size
 	}
 
 	// Create manifest
@@ -314,7 +435,7 @@ func CreateCASSnapshot(ctx context.Context, db DBAdapter, opts CASSnapshotOption
 		opts.ProgressFn(CASProgress{
 			Phase:         "finalize",
 			BlobsUploaded: len(toUpload),
-			BlobsSkipped:  len(existing),
+			BlobsSkipped:  len(existingLocal) + len(remoteBlobs),
 		})
 	}
 
@@ -520,10 +641,10 @@ func DeleteCASSnapshot(ctx context.Context, storage remote.Storage, prefix, snap
 	// Decrement blob reference counts and collect blobs to delete
 	var blobsToDelete []string
 	for _, blob := range manifest.Blobs {
-		catalog.BlobRefCounts[blob.Hash]--
-		if catalog.BlobRefCounts[blob.Hash] <= 0 {
-			blobsToDelete = append(blobsToDelete, blob.Hash)
-			delete(catalog.BlobRefCounts, blob.Hash)
+		catalog.BlobRefCounts[blob.Key]--
+		if catalog.BlobRefCounts[blob.Key] <= 0 {
+			blobsToDelete = append(blobsToDelete, blob.Key)
+			delete(catalog.BlobRefCounts, blob.Key)
 		}
 	}
 
@@ -543,10 +664,10 @@ func DeleteCASSnapshot(ctx context.Context, storage remote.Storage, prefix, snap
 	}
 
 	// Delete unreferenced blobs
-	for _, hash := range blobsToDelete {
-		blobPath := path.Join(prefix, casBlobPrefix, hash)
+	for _, key := range blobsToDelete {
+		blobPath := path.Join(prefix, casBlobPrefix, key)
 		if err := storage.Delete(blobPath); err != nil && !storage.IsNotExistError(err) {
-			return fmt.Errorf("failed to delete blob %s: %w", hash, err)
+			return fmt.Errorf("failed to delete blob %s: %w", key, err)
 		}
 	}
 
@@ -603,15 +724,15 @@ func GarbageCollectCAS(ctx context.Context, opts CASGCOptions) (deletedSnapshots
 	referencedBlobs := make(map[string]int)
 	for _, snap := range toKeep {
 		for _, blob := range snap.Blobs {
-			referencedBlobs[blob.Hash]++
+			referencedBlobs[blob.Key]++
 		}
 	}
 
 	// Find blobs to delete (no longer referenced)
 	var blobsToDelete []string
-	for hash := range catalog.BlobRefCounts {
-		if referencedBlobs[hash] == 0 {
-			blobsToDelete = append(blobsToDelete, hash)
+	for key := range catalog.BlobRefCounts {
+		if referencedBlobs[key] == 0 {
+			blobsToDelete = append(blobsToDelete, key)
 		}
 	}
 
@@ -739,7 +860,7 @@ func (c *CASCatalog) AddSnapshot(manifest CASManifest) {
 
 	// Update blob reference counts
 	for _, blob := range manifest.Blobs {
-		c.BlobRefCounts[blob.Hash]++
+		c.BlobRefCounts[blob.Key]++
 	}
 }
 
@@ -954,7 +1075,8 @@ func (u *casUploader) uploadBlobs(ctx context.Context, srcDir string, files []fi
 
 func (u *casUploader) uploadBlob(ctx context.Context, srcDir string, f fileHashInfo) error {
 	srcPath := filepath.Join(srcDir, f.name)
-	destPath := path.Join(u.prefix, casBlobPrefix, f.hash)
+	// Use SHA256 key format for locally uploaded files
+	destPath := path.Join(u.prefix, casBlobPrefix, MakeSHA256Key(f.hash))
 
 	// Check if blob already exists (double-check)
 	if _, err := u.storage.Size(destPath); err == nil {
@@ -1069,7 +1191,7 @@ func (d *casDownloader) downloadBlobs(ctx context.Context, blobs []CASBlobRef) e
 }
 
 func (d *casDownloader) downloadBlob(ctx context.Context, blob CASBlobRef) error {
-	srcPath := path.Join(d.prefix, casBlobPrefix, blob.Hash)
+	srcPath := path.Join(d.prefix, blob.BlobPath())
 	destPath := filepath.Join(d.destDir, blob.OriginalName)
 
 	// Get size
@@ -1095,18 +1217,218 @@ func (d *casDownloader) downloadBlob(ctx context.Context, blob CASBlobRef) error
 		return fmt.Errorf("failed to read: %w", err)
 	}
 
-	// Verify checksum
-	if d.verifyChecksum {
+	// Verify checksum (only for SHA256 blobs)
+	if d.verifyChecksum && blob.KeyType() == BlobKeyTypeSHA256 {
 		hash := sha256.Sum256(data)
 		actualHash := hex.EncodeToString(hash[:])
-		if actualHash != blob.Hash {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", blob.Hash, actualHash)
+		expectedHash := blob.KeyValue()
+		if actualHash != expectedHash {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHash)
 		}
 	}
 
 	// Write to destination
 	if err := os.WriteFile(destPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write: %w", err)
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Remote Blob Copier - handles files already in tiered storage
+// =============================================================================
+
+// remoteBlobCopier handles copying blobs from tiered storage to snapshot storage.
+type remoteBlobCopier struct {
+	storage     remote.Storage
+	prefix      string
+	parallelism int
+}
+
+// copyRemoteBlobs copies remote files to the blob storage using server-side copy
+// when available, or falls back to download+upload.
+func (c *remoteBlobCopier) copyRemoteBlobs(
+	ctx context.Context,
+	remoteFiles []RemoteFileInfo,
+	catalog *CASCatalog,
+) ([]CASBlobRef, error) {
+	if len(remoteFiles) == 0 {
+		return nil, nil
+	}
+
+	// Check if storage supports server-side copy
+	copier, hasCopy := c.storage.(interface {
+		Copy(ctx context.Context, src, dst string) error
+	})
+
+	// Check if storage supports ETag retrieval
+	etagGetter, hasETag := c.storage.(interface {
+		GetETag(ctx context.Context, objName string) (string, error)
+	})
+
+	results := make([]CASBlobRef, len(remoteFiles))
+	var mu sync.Mutex
+	var errs []error
+
+	// Create work channel
+	type workItem struct {
+		index int
+		info  RemoteFileInfo
+	}
+	workCh := make(chan workItem, len(remoteFiles))
+	for i, info := range remoteFiles {
+		workCh <- workItem{index: i, info: info}
+	}
+	close(workCh)
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < c.parallelism; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for work := range workCh {
+				select {
+				case <-ctx.Done():
+					mu.Lock()
+					errs = append(errs, ctx.Err())
+					mu.Unlock()
+					continue
+				default:
+				}
+
+				blob, err := c.copyRemoteBlob(ctx, work.info, catalog, copier, hasCopy, etagGetter, hasETag)
+				if err != nil {
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("copy %s: %w", work.info.LocalName, err))
+					mu.Unlock()
+					continue
+				}
+
+				mu.Lock()
+				results[work.index] = blob
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return results, nil
+}
+
+// copyRemoteBlob copies a single remote file to blob storage.
+func (c *remoteBlobCopier) copyRemoteBlob(
+	ctx context.Context,
+	info RemoteFileInfo,
+	catalog *CASCatalog,
+	copier interface{ Copy(ctx context.Context, src, dst string) error },
+	hasCopy bool,
+	etagGetter interface{ GetETag(ctx context.Context, objName string) (string, error) },
+	hasETag bool,
+) (CASBlobRef, error) {
+	// Get the ETag to use as the blob key
+	var etag string
+	var size int64
+	var err error
+
+	if hasETag {
+		etag, err = etagGetter.GetETag(ctx, info.RemotePath)
+		if err != nil {
+			return CASBlobRef{}, fmt.Errorf("failed to get ETag: %w", err)
+		}
+	} else {
+		// Fallback: use a composite key from creator info
+		etag = fmt.Sprintf("%d-%d", info.CreatorID, info.CreatorFileNum)
+	}
+
+	// Get size
+	size, err = c.storage.Size(info.RemotePath)
+	if err != nil {
+		return CASBlobRef{}, fmt.Errorf("failed to get size: %w", err)
+	}
+
+	// Create the blob key
+	key := MakeETagKey(etag)
+	destPath := path.Join(c.prefix, casBlobPrefix, key)
+
+	// Check if blob already exists in catalog
+	if catalog.BlobRefCounts[key] > 0 {
+		// Blob already exists, just return reference
+		return CASBlobRef{
+			Key:          key,
+			Size:         size,
+			OriginalName: info.LocalName,
+			Type:         detectFileType(info.LocalName),
+			Source:       "tiered",
+		}, nil
+	}
+
+	// Check if blob already exists in storage
+	if _, err := c.storage.Size(destPath); err == nil {
+		// Already exists, just return reference
+		return CASBlobRef{
+			Key:          key,
+			Size:         size,
+			OriginalName: info.LocalName,
+			Type:         detectFileType(info.LocalName),
+			Source:       "tiered",
+		}, nil
+	}
+
+	// Copy the blob
+	if hasCopy {
+		// Use server-side copy (fast, no data transfer through client)
+		if err := copier.Copy(ctx, info.RemotePath, destPath); err != nil {
+			return CASBlobRef{}, fmt.Errorf("server-side copy failed: %w", err)
+		}
+	} else {
+		// Fallback: download and re-upload (slow but always works)
+		if err := c.downloadAndUpload(ctx, info.RemotePath, destPath, size); err != nil {
+			return CASBlobRef{}, fmt.Errorf("download/upload failed: %w", err)
+		}
+	}
+
+	return CASBlobRef{
+		Key:          key,
+		Size:         size,
+		OriginalName: info.LocalName,
+		Type:         detectFileType(info.LocalName),
+		Source:       "tiered",
+	}, nil
+}
+
+// downloadAndUpload downloads a file and re-uploads it (fallback when Copy is not available).
+func (c *remoteBlobCopier) downloadAndUpload(ctx context.Context, srcPath, destPath string, size int64) error {
+	// Read from source
+	reader, _, err := c.storage.ReadObject(ctx, srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source: %w", err)
+	}
+	defer reader.Close()
+
+	data := make([]byte, size)
+	if err := reader.ReadAt(ctx, data, 0); err != nil {
+		return fmt.Errorf("failed to read: %w", err)
+	}
+
+	// Write to destination
+	writer, err := c.storage.CreateObject(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination: %w", err)
+	}
+
+	if _, err := writer.Write(data); err != nil {
+		writer.Close()
+		return fmt.Errorf("failed to write: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to close writer: %w", err)
 	}
 
 	return nil

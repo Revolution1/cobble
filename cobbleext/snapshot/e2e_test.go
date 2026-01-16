@@ -681,7 +681,7 @@ func TestE2EStorageVerification(t *testing.T) {
 
 	manifestHashes := make(map[string]bool)
 	for _, blob := range manifest.Blobs {
-		manifestHashes[blob.Hash] = true
+		manifestHashes[blob.Key] = true
 	}
 
 	// All manifest hashes should exist as blobs

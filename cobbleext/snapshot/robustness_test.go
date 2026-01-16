@@ -391,7 +391,7 @@ func TestErrorHandlingChecksumMismatch(t *testing.T) {
 
 	// Corrupt one of the blobs
 	if len(manifest.Blobs) > 0 {
-		blobPath := "test/blobs/" + manifest.Blobs[0].Hash
+		blobPath := "test/" + manifest.Blobs[0].BlobPath()
 		w, _ := storage.CreateObject(blobPath)
 		w.Write([]byte("corrupted data that doesn't match the hash"))
 		w.Close()

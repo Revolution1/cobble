@@ -262,6 +262,153 @@ func TestS3StorageIntegration(t *testing.T) {
 	})
 }
 
+func TestS3Copy(t *testing.T) {
+	minio := testutil.StartMinIO(t)
+
+	ctx := context.Background()
+	bucket := "copy-test"
+
+	if err := minio.CreateBucket(ctx, bucket); err != nil {
+		t.Fatalf("failed to create bucket: %v", err)
+	}
+
+	storage, err := NewStorage(Config{
+		Bucket:          bucket,
+		Prefix:          "test-prefix/",
+		Endpoint:        minio.Endpoint,
+		AccessKeyID:     minio.AccessKey,
+		SecretAccessKey: minio.SecretKey,
+		ForcePathStyle:  true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer storage.Close()
+
+	// Create source object
+	testData := []byte("copy test data - this should be copied server-side")
+	srcName := "source-object.txt"
+	dstName := "dest-object.txt"
+
+	writer, err := storage.CreateObject(srcName)
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if _, err := writer.Write(testData); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Copy object
+	if err := storage.Copy(ctx, srcName, dstName); err != nil {
+		t.Fatalf("Copy failed: %v", err)
+	}
+
+	// Verify destination exists and has same content
+	reader, size, err := storage.ReadObject(ctx, dstName)
+	if err != nil {
+		t.Fatalf("ReadObject for destination failed: %v", err)
+	}
+	defer reader.Close()
+
+	if size != int64(len(testData)) {
+		t.Errorf("destination size = %d, want %d", size, len(testData))
+	}
+
+	buf := make([]byte, size)
+	if err := reader.ReadAt(ctx, buf, 0); err != nil {
+		t.Fatalf("ReadAt failed: %v", err)
+	}
+
+	if !bytes.Equal(buf, testData) {
+		t.Errorf("data mismatch: got %q, want %q", buf, testData)
+	}
+
+	// Verify source still exists
+	srcSize, err := storage.Size(srcName)
+	if err != nil {
+		t.Fatalf("source should still exist: %v", err)
+	}
+	if srcSize != int64(len(testData)) {
+		t.Errorf("source size = %d, want %d", srcSize, len(testData))
+	}
+}
+
+func TestS3GetETag(t *testing.T) {
+	minio := testutil.StartMinIO(t)
+
+	ctx := context.Background()
+	bucket := "etag-test"
+
+	if err := minio.CreateBucket(ctx, bucket); err != nil {
+		t.Fatalf("failed to create bucket: %v", err)
+	}
+
+	storage, err := NewStorage(Config{
+		Bucket:          bucket,
+		Prefix:          "test-prefix/",
+		Endpoint:        minio.Endpoint,
+		AccessKeyID:     minio.AccessKey,
+		SecretAccessKey: minio.SecretKey,
+		ForcePathStyle:  true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer storage.Close()
+
+	// Create object
+	testData := []byte("etag test data")
+	objName := "etag-object.txt"
+
+	writer, err := storage.CreateObject(objName)
+	if err != nil {
+		t.Fatalf("CreateObject failed: %v", err)
+	}
+	if _, err := writer.Write(testData); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Get ETag
+	etag, err := storage.GetETag(ctx, objName)
+	if err != nil {
+		t.Fatalf("GetETag failed: %v", err)
+	}
+
+	// ETag should be non-empty and not contain quotes
+	if etag == "" {
+		t.Error("ETag should not be empty")
+	}
+	if etag[0] == '"' || etag[len(etag)-1] == '"' {
+		t.Errorf("ETag should not contain quotes: %q", etag)
+	}
+
+	// ETag for single-part upload should be MD5 hex (32 chars)
+	if len(etag) != 32 {
+		t.Logf("Note: ETag length is %d (expected 32 for MD5). This might be a multipart upload or custom S3 implementation.", len(etag))
+	}
+
+	// Getting ETag for same content should return the same value
+	etag2, err := storage.GetETag(ctx, objName)
+	if err != nil {
+		t.Fatalf("GetETag (second call) failed: %v", err)
+	}
+	if etag != etag2 {
+		t.Errorf("ETag should be consistent: %s vs %s", etag, etag2)
+	}
+
+	// Getting ETag for non-existent object should fail
+	_, err = storage.GetETag(ctx, "nonexistent-object.txt")
+	if err == nil {
+		t.Error("GetETag should fail for non-existent object")
+	}
+}
+
 func TestS3Factory(t *testing.T) {
 	minio := testutil.StartMinIO(t)
 

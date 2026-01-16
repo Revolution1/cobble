@@ -625,13 +625,13 @@ func TestBlobDeduplication_MinIO(t *testing.T) {
 	// Both snapshots should have the same blobs (deduplication)
 	require.Equal(t, len(manifest1.Blobs), len(manifest2.Blobs))
 
-	// All blob hashes should match
-	hashes1 := make(map[string]bool)
+	// All blob keys should match
+	keys1 := make(map[string]bool)
 	for _, blob := range manifest1.Blobs {
-		hashes1[blob.Hash] = true
+		keys1[blob.Key] = true
 	}
 	for _, blob := range manifest2.Blobs {
-		require.True(t, hashes1[blob.Hash], "blob %s should be deduplicated", blob.Hash)
+		require.True(t, keys1[blob.Key], "blob %s should be deduplicated", blob.Key)
 	}
 
 	// Add some new data

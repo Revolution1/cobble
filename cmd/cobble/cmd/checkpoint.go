@@ -246,10 +246,6 @@ func runCheckpointRestore(cmd *cobra.Command, args []string) error {
 		return errors.New("--dest is required")
 	}
 
-	if err := validateDest(checkpointDestDir, checkpointForce); err != nil {
-		return err
-	}
-
 	entries, err := loadCheckpoints()
 	if err != nil {
 		return err
@@ -264,6 +260,15 @@ func runCheckpointRestore(cmd *cobra.Command, args []string) error {
 	}
 	if target == nil {
 		return fmt.Errorf("checkpoint %s not found", checkpointID)
+	}
+
+	// Validate each database subdirectory instead of the entire dest
+	// This allows multiple checkpoints to be restored to the same parent directory
+	for _, db := range target.Databases {
+		dbDest := filepath.Join(checkpointDestDir, db.Name)
+		if err := validateDest(dbDest, checkpointForce); err != nil {
+			return fmt.Errorf("destination %s: %w", dbDest, err)
+		}
 	}
 
 	storage, prefix, err := getStorageFromConfig()

@@ -470,7 +470,11 @@ func runSnapshotInfoStandalone(ctx context.Context, snapshotID string) error {
 	if len(manifest.Blobs) > 0 && snapshotTreeVerbose {
 		fmt.Println("\n  Files:")
 		for _, blob := range manifest.Blobs {
-			fmt.Printf("    %s (%s) [%s]\n", blob.OriginalName, formatBytes(blob.Size), blob.Hash[:12])
+			keyPreview := blob.Key
+			if len(keyPreview) > 20 {
+				keyPreview = keyPreview[:20] + "..."
+			}
+			fmt.Printf("    %s (%s) [%s]\n", blob.OriginalName, formatBytes(blob.Size), keyPreview)
 		}
 	}
 

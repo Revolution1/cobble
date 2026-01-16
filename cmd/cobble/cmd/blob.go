@@ -191,7 +191,7 @@ func runBlobInfo(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		for _, blob := range manifest.Blobs {
-			if blob.Hash == hash {
+			if blob.Key == hash {
 				referencingSnapshots = append(referencingSnapshots, snap.ID)
 				break
 			}

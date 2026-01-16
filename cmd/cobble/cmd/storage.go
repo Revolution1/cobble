@@ -127,7 +127,7 @@ var (
 
 func init() {
 	// Add persistent flags for storage configuration
-	rootCmd.PersistentFlags().StringVar(&storagePrefix, "prefix", "", "Storage prefix for snapshots")
+	rootCmd.PersistentFlags().StringVar(&storagePrefix, "prefix", "", "Storage prefix (e.g., 'myapp/' creates myapp/blobs/, myapp/snapshots/, myapp/catalog.json)")
 	rootCmd.PersistentFlags().StringVar(&storageBucket, "bucket", "", "S3 bucket name")
 	rootCmd.PersistentFlags().StringVar(&storageEndpoint, "endpoint", "", "S3 endpoint URL")
 }

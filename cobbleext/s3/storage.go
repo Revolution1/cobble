@@ -193,6 +193,51 @@ func (s *Storage) IsNotExistError(err error) bool {
 	return errors.As(err, &nsk) || errors.As(err, &notFound)
 }
 
+// Copy implements cobbleext.StorageCopier.
+// It performs a server-side copy within the same bucket.
+func (s *Storage) Copy(ctx context.Context, srcName, dstName string) error {
+	srcKey := s.prefix + srcName
+	dstKey := s.prefix + dstName
+
+	// S3 CopyObject requires the source to be in "bucket/key" format
+	copySource := s.bucket + "/" + srcKey
+
+	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(s.bucket),
+		CopySource: aws.String(copySource),
+		Key:        aws.String(dstKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy %s to %s: %w", srcName, dstName, err)
+	}
+	return nil
+}
+
+// GetETag implements cobbleext.StorageETagGetter.
+// Returns the ETag of the object (MD5 for single-part uploads).
+func (s *Storage) GetETag(ctx context.Context, objName string) (string, error) {
+	key := s.prefix + objName
+
+	resp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if resp.ETag == nil {
+		return "", fmt.Errorf("no ETag returned for %s", objName)
+	}
+
+	// ETag comes with quotes, remove them
+	etag := *resp.ETag
+	if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
+		etag = etag[1 : len(etag)-1]
+	}
+	return etag, nil
+}
+
 // objectReader implements remote.ObjectReader for S3.
 type objectReader struct {
 	client *s3.Client
