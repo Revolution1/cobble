@@ -65,8 +65,15 @@ func loadStorageConfig() (*StorageConfig, error) {
 			cfg.S3AccessKeyID = fileCfg.TieredStorage.S3.AccessKeyID
 			cfg.S3SecretAccessKey = fileCfg.TieredStorage.S3.SecretAccessKey
 			cfg.S3ForcePathStyle = fileCfg.TieredStorage.S3.ForcePathStyle
+			// Use S3 prefix if set, otherwise fall back to snapshot prefix
+			if fileCfg.TieredStorage.S3.Prefix != "" {
+				cfg.S3Prefix = fileCfg.TieredStorage.S3.Prefix
+			}
 		}
-		cfg.S3Prefix = fileCfg.Snapshot.Prefix
+		// Snapshot prefix overrides S3 prefix (for backwards compatibility)
+		if fileCfg.Snapshot.Prefix != "" {
+			cfg.S3Prefix = fileCfg.Snapshot.Prefix
+		}
 	}
 
 	// Override with environment variables
@@ -87,6 +94,11 @@ func loadStorageConfig() (*StorageConfig, error) {
 	}
 	if os.Getenv(cobbleext.EnvS3ForcePathStyle) == "true" {
 		cfg.S3ForcePathStyle = true
+	}
+	// Support both COBBLE_S3_PREFIX and COBBLE_SNAPSHOT_PREFIX
+	// S3_PREFIX is the general storage prefix, SNAPSHOT_PREFIX overrides for backwards compatibility
+	if v := os.Getenv(cobbleext.EnvS3Prefix); v != "" {
+		cfg.S3Prefix = v
 	}
 	if v := os.Getenv(cobbleext.EnvSnapshotPrefix); v != "" {
 		cfg.S3Prefix = v
