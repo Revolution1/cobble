@@ -19,6 +19,55 @@ import (
 // Config represents the external configuration for Cobble.
 type Config struct {
 	TieredStorage TieredStorageConfig `yaml:"tiered_storage" json:"tiered_storage"`
+	Admin         AdminConfig         `yaml:"admin" json:"admin"`
+	AutoSnapshot  AutoSnapshotConfig  `yaml:"auto_snapshot" json:"auto_snapshot"`
+	Snapshot      SnapshotConfig      `yaml:"snapshot" json:"snapshot"`
+}
+
+// AdminConfig configures the admin HTTP server.
+type AdminConfig struct {
+	// Enabled enables the admin server.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Addr is the address to bind to.
+	// Can be a TCP address (e.g., "127.0.0.1:6060", ":6060")
+	// or a Unix socket path (e.g., "unix:///var/run/cobble.sock")
+	// Default: "127.0.0.1:6060"
+	Addr string `yaml:"addr" json:"addr"`
+
+	// Token is an optional Bearer token for authentication.
+	// If set, all requests must include "Authorization: Bearer <token>".
+	Token string `yaml:"token,omitempty" json:"token,omitempty"`
+}
+
+// AutoSnapshotConfig configures automatic snapshots.
+type AutoSnapshotConfig struct {
+	// Enabled enables automatic snapshots.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Interval is the interval between snapshots (e.g., "6h", "1d").
+	Interval time.Duration `yaml:"interval" json:"interval"`
+
+	// Incremental enables incremental snapshots.
+	Incremental bool `yaml:"incremental" json:"incremental"`
+
+	// KeepLast is the number of snapshots to keep.
+	// Older snapshots are automatically deleted.
+	KeepLast int `yaml:"keep_last" json:"keep_last"`
+}
+
+// SnapshotConfig configures snapshot storage.
+type SnapshotConfig struct {
+	// Bucket is the bucket for snapshots (if different from tiered storage).
+	Bucket string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
+
+	// Prefix is the prefix for snapshot objects.
+	// Default: "snapshots/"
+	Prefix string `yaml:"prefix" json:"prefix"`
+
+	// UseTieredConfig uses the tiered storage config for snapshots.
+	// If true, Bucket is ignored and tiered storage bucket is used.
+	UseTieredConfig bool `yaml:"use_tiered_config" json:"use_tiered_config"`
 }
 
 // TieredStorageConfig configures tiered storage.
@@ -207,6 +256,7 @@ func loadFromFile(cfg *Config, path string) error {
 }
 
 func applyDefaults(cfg *Config) {
+	// Tiered storage defaults
 	if cfg.TieredStorage.Strategy == "" {
 		cfg.TieredStorage.Strategy = TieringStrategyNone
 	}
@@ -234,6 +284,24 @@ func applyDefaults(cfg *Config) {
 		if cfg.TieredStorage.S3.WriteTimeout == 0 {
 			cfg.TieredStorage.S3.WriteTimeout = 60 * time.Second
 		}
+	}
+
+	// Admin server defaults
+	if cfg.Admin.Addr == "" {
+		cfg.Admin.Addr = "127.0.0.1:6060"
+	}
+
+	// Auto snapshot defaults
+	if cfg.AutoSnapshot.Interval == 0 {
+		cfg.AutoSnapshot.Interval = 6 * time.Hour
+	}
+	if cfg.AutoSnapshot.KeepLast == 0 {
+		cfg.AutoSnapshot.KeepLast = 24
+	}
+
+	// Snapshot defaults
+	if cfg.Snapshot.Prefix == "" {
+		cfg.Snapshot.Prefix = "snapshots/"
 	}
 }
 

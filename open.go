@@ -508,6 +508,15 @@ func Open(dirname string, opts *Options) (db *DB, err error) {
 		}
 	})
 
+	// Call post-open hook to allow external packages (like cobbleext) to
+	// initialize services that require a running DB instance (e.g., admin server).
+	if PostOpenHook != nil {
+		if err := PostOpenHook(d); err != nil {
+			d.Close()
+			return nil, err
+		}
+	}
+
 	return d, nil
 }
 

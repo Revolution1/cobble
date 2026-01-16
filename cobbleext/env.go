@@ -6,7 +6,9 @@ package cobbleext
 
 import (
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Environment variable names for Cobble configuration.
@@ -35,9 +37,25 @@ const (
 	EnvGCSCredentialsFile = "COBBLE_GCS_CREDENTIALS_FILE"
 
 	// Cache configuration
-	EnvCacheSize             = "COBBLE_CACHE_SIZE"
-	EnvCacheBlockSize        = "COBBLE_CACHE_BLOCK_SIZE"
+	EnvCacheSize              = "COBBLE_CACHE_SIZE"
+	EnvCacheBlockSize         = "COBBLE_CACHE_BLOCK_SIZE"
 	EnvCacheShardingBlockSize = "COBBLE_CACHE_SHARDING_BLOCK_SIZE"
+
+	// Admin server configuration
+	EnvAdminEnabled = "COBBLE_ADMIN_ENABLED"
+	EnvAdminAddr    = "COBBLE_ADMIN_ADDR"
+	EnvAdminToken   = "COBBLE_ADMIN_TOKEN"
+
+	// Auto snapshot configuration
+	EnvAutoSnapshotEnabled     = "COBBLE_AUTO_SNAPSHOT"
+	EnvAutoSnapshotInterval    = "COBBLE_AUTO_SNAPSHOT_INTERVAL"
+	EnvAutoSnapshotIncremental = "COBBLE_AUTO_SNAPSHOT_INCREMENTAL"
+	EnvAutoSnapshotKeepLast    = "COBBLE_AUTO_SNAPSHOT_KEEP_LAST"
+
+	// Snapshot configuration
+	EnvSnapshotBucket          = "COBBLE_SNAPSHOT_BUCKET"
+	EnvSnapshotPrefix          = "COBBLE_SNAPSHOT_PREFIX"
+	EnvSnapshotUseTieredConfig = "COBBLE_SNAPSHOT_USE_TIERED_CONFIG"
 )
 
 // LoadFromEnv loads configuration from environment variables.
@@ -61,6 +79,15 @@ func LoadFromEnv(cfg *Config) {
 
 	// Cache configuration
 	loadCacheFromEnv(cfg)
+
+	// Admin server configuration
+	loadAdminFromEnv(cfg)
+
+	// Auto snapshot configuration
+	loadAutoSnapshotFromEnv(cfg)
+
+	// Snapshot configuration
+	loadSnapshotFromEnv(cfg)
 }
 
 func loadS3FromEnv(cfg *Config) {
@@ -147,8 +174,71 @@ func loadCacheFromEnv(cfg *Config) {
 	}
 }
 
+func loadAdminFromEnv(cfg *Config) {
+	if v := os.Getenv(EnvAdminEnabled); v != "" {
+		cfg.Admin.Enabled = parseBool(v)
+	}
+	if v := os.Getenv(EnvAdminAddr); v != "" {
+		cfg.Admin.Addr = v
+	}
+	if v := os.Getenv(EnvAdminToken); v != "" {
+		cfg.Admin.Token = v
+	}
+}
+
+func loadAutoSnapshotFromEnv(cfg *Config) {
+	if v := os.Getenv(EnvAutoSnapshotEnabled); v != "" {
+		cfg.AutoSnapshot.Enabled = parseBool(v)
+	}
+	if v := os.Getenv(EnvAutoSnapshotInterval); v != "" {
+		cfg.AutoSnapshot.Interval = parseDuration(v)
+	}
+	if v := os.Getenv(EnvAutoSnapshotIncremental); v != "" {
+		cfg.AutoSnapshot.Incremental = parseBool(v)
+	}
+	if v := os.Getenv(EnvAutoSnapshotKeepLast); v != "" {
+		cfg.AutoSnapshot.KeepLast = parseInt(v)
+	}
+}
+
+func loadSnapshotFromEnv(cfg *Config) {
+	if v := os.Getenv(EnvSnapshotBucket); v != "" {
+		cfg.Snapshot.Bucket = v
+	}
+	if v := os.Getenv(EnvSnapshotPrefix); v != "" {
+		cfg.Snapshot.Prefix = v
+	}
+	if v := os.Getenv(EnvSnapshotUseTieredConfig); v != "" {
+		cfg.Snapshot.UseTieredConfig = parseBool(v)
+	}
+}
+
 // parseBool parses a boolean string value.
 func parseBool(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "true" || s == "1" || s == "yes" || s == "on" || s == "enabled"
+}
+
+// parseDuration parses a duration string (e.g., "6h", "30m", "1d").
+func parseDuration(s string) time.Duration {
+	s = strings.TrimSpace(s)
+	// Handle day suffix which time.ParseDuration doesn't support
+	if strings.HasSuffix(s, "d") {
+		s = strings.TrimSuffix(s, "d")
+		if days, err := strconv.Atoi(s); err == nil {
+			return time.Duration(days) * 24 * time.Hour
+		}
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+	return 0
+}
+
+// parseInt parses an integer string.
+func parseInt(s string) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return v
+	}
+	return 0
 }
