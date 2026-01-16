@@ -34,7 +34,8 @@ func CreateSnapshot(ctx context.Context, db DBAdapter, opts SnapshotOptions) (*S
 	// Generate snapshot ID if not provided
 	snapshotID := opts.SnapshotID
 	if snapshotID == "" {
-		snapshotID = time.Now().UTC().Format("20060102T150405Z")
+		// Use nanoseconds to ensure uniqueness
+		snapshotID = time.Now().UTC().Format("20060102T150405.000000000Z")
 	}
 
 	prefix := opts.Prefix

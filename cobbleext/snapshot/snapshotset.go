@@ -186,7 +186,7 @@ func CreateSnapshotSet(ctx context.Context, databases map[string]DBAdapter, opts
 
 	setID := opts.SetID
 	if setID == "" {
-		setID = time.Now().UTC().Format("20060102T150405Z")
+		setID = time.Now().UTC().Format("20060102T150405.000000000Z")
 	}
 
 	prefix := opts.Prefix
